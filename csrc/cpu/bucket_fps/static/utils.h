@@ -13,3 +13,5 @@ inline constexpr T powi(const T base, const size_t exponent) {
     return (exponent == 0) ? 1 : (base * powi(base, exponent - 1));
 }
 } // namespace quickfps
+
+

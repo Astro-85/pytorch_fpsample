@@ -4,7 +4,8 @@
 using torch::Tensor;
 using FuncType = std::tuple<Tensor, Tensor>(const Tensor &, int64_t,
                                             torch::optional<int64_t>,
-                                            torch::optional<int64_t>);
+                                            torch::optional<int64_t>,
+                                            torch::optional<Tensor>);
 
 ////////////////////
 //                //
@@ -18,12 +19,13 @@ class FPSampleFunction : public torch::autograd::Function<FPSampleFunction> {
   public:
     static variable_list forward(AutogradContext *ctx, const Tensor &x,
                                  int64_t k, torch::optional<int64_t> h,
-                                 torch::optional<int64_t> start_idx) {
+                                 torch::optional<int64_t> start_idx,
+                                 torch::optional<Tensor> mask) {
         torch::AutoDispatchBelowADInplaceOrView guard;
         static auto op = torch::Dispatcher::singleton()
                              .findSchemaOrThrow("torch_fpsample::sample", "")
                              .typed<FuncType>();
-        auto results = op.call(x, k, h, start_idx);
+        auto results = op.call(x, k, h, start_idx, mask);
         auto ret_tensor = std::get<0>(results);
         auto ret_indices = std::get<1>(results);
         ctx->save_for_backward({ret_indices});
@@ -51,11 +53,14 @@ class FPSampleFunction : public torch::autograd::Function<FPSampleFunction> {
 
 std::tuple<Tensor, Tensor> sample_autograd(const Tensor &x, int64_t k,
                                            torch::optional<int64_t> h,
-                                           torch::optional<int64_t> start_idx) {
-    auto results = FPSampleFunction::apply(x, k, h, start_idx);
+                                           torch::optional<int64_t> start_idx,
+                                           torch::optional<Tensor> mask) {
+    auto results = FPSampleFunction::apply(x, k, h, start_idx, mask);
     return std::make_tuple(results[0], results[1]);
 }
 
 TORCH_LIBRARY_IMPL(torch_fpsample, Autograd, m) {
     m.impl("sample", &sample_autograd);
 }
+
+

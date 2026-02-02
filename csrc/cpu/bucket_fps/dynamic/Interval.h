@@ -14,3 +14,5 @@ template <typename S> class Interval {
     Interval(const Interval &o) : low(o.low), high(o.high) {};
 };
 } // namespace quickfps::dynamic
+
+

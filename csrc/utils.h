@@ -15,3 +15,5 @@ bnorm_reshape(const torch::Tensor &t) {
                     "x must have at least 2 dims, but got size: ", t.sizes());
     }
 }
+
+

@@ -94,3 +94,5 @@ template <typename T, typename S> void Point<T, S>::reset() {
 }
 
 } // namespace quickfps::dynamic
+
+

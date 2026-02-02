@@ -99,3 +99,5 @@ template <typename T, size_t DIM, typename S> void Point<T, DIM, S>::reset() {
 }
 
 } // namespace quickfps
+
+

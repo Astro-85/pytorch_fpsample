@@ -48,7 +48,7 @@ Size([64, 1024, 3]), Size([64, 1024])
 
 This package builds a CUDA extension when a CUDA toolchain is available (i.e., `nvcc` / `CUDA_HOME`).
 
-- Force CUDA build: `WITH_CUDA=1 pip install .`
+- Force CUDA build: `WITH_CUDA=1 pip install .` or `WITH_CUDA=1 pip install . --no-build-isolation --no-cache-dir -v`
 - Force CPU-only build: `WITH_CUDA=0 pip install .`
 
 On GPU, the sampler uses **bucket-based pruning** (spatial voxel buckets + bounding-box lower bounds) to skip most distance updates; it is **not** the standard `O(Nk)` dense FPS update.

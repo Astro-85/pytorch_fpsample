@@ -653,6 +653,146 @@ __global__ void reduce_bucket_best_kernel(
     }
 }
 
+// Fused reduce + active mask kernel to cut one launch per iteration.
+// Computes next index and active buckets in one pass (per batch block).
+__global__ void reduce_and_active_mask_kernel(
+    const float* __restrict__ coords1, // [B,N,p] float32
+    const float* __restrict__ coords2, // [B,N,p] (optional; may be nullptr)
+    const int32_t* __restrict__ bucket_id, // [B,N]
+    const float* __restrict__ bbox1_min, // [B,key_range,p]
+    const float* __restrict__ bbox1_max, // [B,key_range,p]
+    const float* __restrict__ bbox2_min, // [B,key_range,p] (optional; may be nullptr)
+    const float* __restrict__ bbox2_max, // [B,key_range,p] (optional; may be nullptr)
+    int64_t* __restrict__ bucket_best_key, // [B,key_range]
+    const int32_t* __restrict__ bucket_count, // [B,key_range]
+    uint8_t* __restrict__ selected_mask, // [B,N]
+    int B, int N, int p, int key_range,
+    int64_t* __restrict__ out_idx, // [B]
+    int64_t* __restrict__ out_indices, // [B,k] (optional, may be nullptr)
+    int out_stride_k,
+    int out_col,
+    uint8_t* __restrict__ active_mask // [B,key_range]
+) {
+    int b = blockIdx.x;
+    if (b >= B) return;
+
+    unsigned long long local_best_k = 0ull;
+
+    for (int j = threadIdx.x; j < key_range; j += blockDim.x) {
+        int32_t cnt = bucket_count[b * key_range + j];
+        if (cnt <= 0) continue;
+        unsigned long long k = (unsigned long long)bucket_best_key[b * (int64_t)key_range + j];
+        if (k == 0ull) continue;
+        int32_t idx = unpack_best_idx(k);
+        if (selected_mask && selected_mask[(int64_t)b * N + idx]) continue;
+        if (k > local_best_k) local_best_k = k;
+    }
+
+    __shared__ unsigned long long sh_best_k[256];
+    int t = threadIdx.x;
+    if (t < 256) sh_best_k[t] = local_best_k;
+    __syncthreads();
+
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (t < stride) {
+            if (sh_best_k[t + stride] > sh_best_k[t]) sh_best_k[t] = sh_best_k[t + stride];
+        }
+        __syncthreads();
+    }
+
+    __shared__ int64_t sh_chosen;
+    if (t == 0) {
+        unsigned long long best_k = sh_best_k[0];
+        int64_t chosen = 0;
+
+        if (best_k == 0ull && selected_mask) {
+            // Fallback: pick the first unselected index.
+            for (int64_t i = 0; i < (int64_t)N; ++i) {
+                if (!selected_mask[(int64_t)b * N + i]) { chosen = i; break; }
+            }
+        } else {
+            chosen = (int64_t)unpack_best_idx(best_k);
+        }
+
+        out_idx[b] = chosen;
+        if (out_indices) {
+            out_indices[(int64_t)b * out_stride_k + out_col] = chosen;
+        }
+
+        // Mark selected (not eligible).
+        if (selected_mask) {
+            int64_t ci = (chosen < 0) ? 0 : ((chosen >= N) ? (N - 1) : chosen);
+            selected_mask[(int64_t)b * N + ci] = 1;
+        }
+        sh_chosen = chosen;
+    }
+    __syncthreads();
+
+    int64_t ridx = sh_chosen;
+    ridx = (ridx < 0) ? 0 : ((ridx >= N) ? (N - 1) : ridx);
+
+    int32_t ref_bucket = bucket_id[(int64_t)b * N + ridx];
+    const float* cref1 = coords1 + ((int64_t)b * N + ridx) * p;
+    const float* cref2 = (coords2 != nullptr) ? (coords2 + ((int64_t)b * N + ridx) * p) : nullptr;
+    bool use_coord2 = (coords2 != nullptr && bbox2_min != nullptr && bbox2_max != nullptr);
+
+    for (int j = threadIdx.x; j < key_range; j += blockDim.x) {
+        int32_t cnt = bucket_count[b * key_range + j];
+        if (cnt <= 0) {
+            active_mask[b * (int64_t)key_range + j] = 0;
+            continue;
+        }
+
+        unsigned long long key = (unsigned long long)bucket_best_key[b * (int64_t)key_range + j];
+        float lastmax = unpack_best_dist(key);
+
+        // Fast reject: if lastmax==0, nothing in this bucket can improve.
+        if (!(lastmax > 0.0f)) {
+            uint8_t active = (ref_bucket == j) ? 1 : 0;
+            active_mask[b * (int64_t)key_range + j] = active;
+            if (active) bucket_best_key[b * (int64_t)key_range + j] = 0;
+            continue;
+        }
+
+        const int64_t leaf_base = ((int64_t)b * key_range + j) * p;
+        const float* b1min = bbox1_min + leaf_base;
+        const float* b1max = bbox1_max + leaf_base;
+
+        float bound = 0.0f;
+        for (int d = 0; d < p; ++d) {
+            float v = cref1[d];
+            float dd = 0.0f;
+            float lo = b1min[d], hi = b1max[d];
+            if (v > hi) dd = v - hi;
+            else if (v < lo) dd = lo - v;
+            bound += dd * dd;
+        }
+
+        if (use_coord2) {
+            const float* b2min = bbox2_min + leaf_base;
+            const float* b2max = bbox2_max + leaf_base;
+
+            float bound2 = 0.0f;
+            for (int d = 0; d < p; ++d) {
+                float v = cref2[d];
+                float dd = 0.0f;
+                float lo = b2min[d], hi = b2max[d];
+                if (v > hi) dd = v - hi;
+                else if (v < lo) dd = lo - v;
+                bound2 += dd * dd;
+            }
+            bound = fmaxf(bound, bound2);
+        }
+
+        uint8_t active = (bound < lastmax) ? 1 : 0;
+        if (ref_bucket == j) active = 1;
+        active_mask[b * (int64_t)key_range + j] = active;
+        if (active) {
+            bucket_best_key[b * (int64_t)key_range + j] = 0;
+        }
+    }
+}
+
 __global__ void active_mask_kernel(
     const float* __restrict__ coords1, // [B,N,p] float32
     const float* __restrict__ coords2, // [B,N,p] float32 (optional; may be nullptr)
@@ -754,6 +894,199 @@ __device__ __forceinline__ unsigned long long warp_reduce_max_u64(unsigned long 
     return v;
 }
 
+// Warp reduction for float sum.
+__device__ __forceinline__ float warp_reduce_sum_f32(float v) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v += __shfl_down_sync(0xffffffffu, v, offset);
+    }
+    return v;
+}
+
+template <typename scalar_t>
+struct WarpL2;
+
+// Generic fallback (no vectorization). Uses warp-coalesced strided loads.
+template <typename scalar_t>
+struct WarpL2 {
+    __device__ __forceinline__ static float compute(const scalar_t* __restrict__ xi,
+                                                    const scalar_t* __restrict__ ref,
+                                                    int D,
+                                                    float early_stop) {
+        int lane = threadIdx.x & 31;
+        float acc = 0.0f;
+
+        // Check early-stop every 128 dims.
+        constexpr int CHECK = 128;
+        for (int base = 0; base < D; base += CHECK) {
+            int end = min(D, base + CHECK);
+            for (int d = base + lane; d < end; d += 32) {
+                float dv = to_float(xi[d]) - to_float(ref[d]);
+                acc += dv * dv;
+            }
+            float total = warp_reduce_sum_f32(acc);
+            total = __shfl_sync(0xffffffffu, total, 0);
+            if (total >= early_stop) return early_stop;
+        }
+        float total = warp_reduce_sum_f32(acc);
+        return __shfl_sync(0xffffffffu, total, 0);
+    }
+};
+
+template <>
+struct WarpL2<float> {
+    __device__ __forceinline__ static float compute(const float* __restrict__ xi,
+                                                    const float* __restrict__ ref,
+                                                    int D,
+                                                    float early_stop) {
+        // Process 4 dims per lane per step (float4), so one warp step covers 128 dims.
+        int lane = threadIdx.x & 31;
+        float acc = 0.0f;
+        int D4 = D >> 2;          // floor(D/4)
+        int tail = D & 3;         // D % 4
+
+        const float4* xi4 = reinterpret_cast<const float4*>(xi);
+        const float4* rf4 = reinterpret_cast<const float4*>(ref);
+
+        // Early-exit check every 128 dims (one warp step).
+        for (int base = 0; base < D4; base += 32) {
+            int j = base + lane;
+            if (j < D4) {
+                float4 a = xi4[j];
+                float4 b = rf4[j];
+                float dv0 = a.x - b.x; acc += dv0 * dv0;
+                float dv1 = a.y - b.y; acc += dv1 * dv1;
+                float dv2 = a.z - b.z; acc += dv2 * dv2;
+                float dv3 = a.w - b.w; acc += dv3 * dv3;
+            }
+            float total = warp_reduce_sum_f32(acc);
+            total = __shfl_sync(0xffffffffu, total, 0);
+            if (total >= early_stop) {
+                // All lanes break consistently.
+                return early_stop;
+            }
+        }
+
+        // Handle tail dims (at most 3) without warp divergence.
+        if (tail) {
+            int start = D4 << 2;
+            if (lane < tail) {
+                int d = start + lane;
+                float dv = xi[d] - ref[d];
+                acc += dv * dv;
+            }
+        }
+        float total = warp_reduce_sum_f32(acc);
+        return __shfl_sync(0xffffffffu, total, 0);
+    }
+};
+
+template <>
+struct WarpL2<at::Half> {
+    __device__ __forceinline__ static float compute(const at::Half* __restrict__ xi,
+                                                    const at::Half* __restrict__ ref,
+                                                    int D,
+                                                    float early_stop) {
+        int lane = threadIdx.x & 31;
+        float acc = 0.0f;
+        int D2 = D >> 1;        // floor(D/2)
+        int tail = D & 1;       // D % 2
+        const __half2* xi2 = reinterpret_cast<const __half2*>(xi);
+        const __half2* rf2 = reinterpret_cast<const __half2*>(ref);
+
+        // One warp step loads one half2 per lane => 64 dims per step.
+        // Check early-stop every 2 steps => 128 dims.
+        int step = 0;
+        for (int base = 0; base < D2; base += 32) {
+            int j = base + lane;
+            if (j < D2) {
+                __half2 a2 = xi2[j];
+                __half2 b2 = rf2[j];
+                float2 af = __half22float2(a2);
+                float2 bf = __half22float2(b2);
+                float dv0 = af.x - bf.x; acc += dv0 * dv0;
+                float dv1 = af.y - bf.y; acc += dv1 * dv1;
+            }
+            step++;
+            if (step == 2 || (base + 32) >= D2) {
+                float total = warp_reduce_sum_f32(acc);
+                total = __shfl_sync(0xffffffffu, total, 0);
+                if (total >= early_stop) return early_stop;
+                step = 0;
+            }
+        }
+
+        // Tail dim (at most 1).
+        if (tail && (lane == 0)) {
+            int d = D2 << 1;
+            float dv = __half2float(reinterpret_cast<const __half*>(xi)[d]) -
+                       __half2float(reinterpret_cast<const __half*>(ref)[d]);
+            acc += dv * dv;
+        }
+        __syncwarp();
+        // Tail could push us over early_stop.
+        if (__shfl_sync(0xffffffffu, acc, 0) >= early_stop) {
+            // Not exact (acc is lane-local), so we do a real check below.
+        }
+        {
+            float total = warp_reduce_sum_f32(acc);
+            total = __shfl_sync(0xffffffffu, total, 0);
+            if (total >= early_stop) return early_stop;
+        }
+        float total = warp_reduce_sum_f32(acc);
+        return __shfl_sync(0xffffffffu, total, 0);
+    }
+};
+
+template <>
+struct WarpL2<at::BFloat16> {
+    __device__ __forceinline__ static float compute(const at::BFloat16* __restrict__ xi,
+                                                    const at::BFloat16* __restrict__ ref,
+                                                    int D,
+                                                    float early_stop) {
+        int lane = threadIdx.x & 31;
+        float acc = 0.0f;
+        int D2 = D >> 1;
+        int tail = D & 1;
+        const __nv_bfloat162* xi2 = reinterpret_cast<const __nv_bfloat162*>(xi);
+        const __nv_bfloat162* rf2 = reinterpret_cast<const __nv_bfloat162*>(ref);
+
+        int step = 0;
+        for (int base = 0; base < D2; base += 32) {
+            int j = base + lane;
+            if (j < D2) {
+                __nv_bfloat162 a2 = xi2[j];
+                __nv_bfloat162 b2 = rf2[j];
+                float2 af = __bfloat1622float2(a2);
+                float2 bf = __bfloat1622float2(b2);
+                float dv0 = af.x - bf.x; acc += dv0 * dv0;
+                float dv1 = af.y - bf.y; acc += dv1 * dv1;
+            }
+            step++;
+            if (step == 2 || (base + 32) >= D2) {
+                float total = warp_reduce_sum_f32(acc);
+                total = __shfl_sync(0xffffffffu, total, 0);
+                if (total >= early_stop) return early_stop;
+                step = 0;
+            }
+        }
+
+        if (tail && (lane == 0)) {
+            int d = D2 << 1;
+            float dv = __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(xi)[d]) -
+                       __bfloat162float(reinterpret_cast<const __nv_bfloat16*>(ref)[d]);
+            acc += dv * dv;
+        }
+        __syncwarp();
+        {
+            float total = warp_reduce_sum_f32(acc);
+            total = __shfl_sync(0xffffffffu, total, 0);
+            if (total >= early_stop) return early_stop;
+        }
+        float total = warp_reduce_sum_f32(acc);
+        return __shfl_sync(0xffffffffu, total, 0);
+    }
+};
+
 template <typename scalar_t, bool USE_COORD2>
 __global__ void update_leaves_kernel(
     const scalar_t* __restrict__ x, // [B,N,D]
@@ -804,159 +1137,83 @@ __global__ void update_leaves_kernel(
 
     unsigned long long local_best = 0ull;
 
-    // Distance compute: projection lower-bound + full-D early-exit.
-    // First compute a cheap lower-bound in projection space(s):
-    //   lb = max(||P1(x)-P1(ref)||^2, ||P2(x)-P2(ref)||^2)
-    // If lb >= old_min_dist, we can skip the full-D loop safely.
-    constexpr int CHECK_ELEMS = 128; // check every ~128 dims to balance divergence vs wasted work.
+    // Distance compute: projection lower-bound + warp-coalesced full-D distance.
+    // We use one warp per candidate point, coalescing loads across lanes.
+    int lane = threadIdx.x & 31;
+    int wid  = threadIdx.x >> 5;
+    int num_warps = (int)blockDim.x >> 5;
 
-    for (int32_t t = start + (int32_t)threadIdx.x; t < end; t += (int32_t)blockDim.x) {
-        int32_t i = bucket_indices[(int64_t)b * N + t];
-        if ((int)i < 0 || (int)i >= N) continue;
-        if (selected_mask && selected_mask[(int64_t)b * N + i]) continue;
-
-        float old = min_dist[(int64_t)b * N + i];
-
-        // Projection-space bound.
-        float lb = 0.0f;
-        const float* ci1 = coords1 + ((int64_t)b * N + i) * p;
-        #pragma unroll
-        for (int dd = 0; dd < 64; ++dd) { // p is <=64 (checked on host)
-            if (dd >= p) break;
-            float dv = ci1[dd] - cref1[dd];
-            lb += dv * dv;
+    for (int32_t t = start + wid; t < end; t += num_warps) {
+        int32_t i = -1;
+        if (lane == 0) {
+            i = bucket_indices[(int64_t)b * N + t];
         }
-        if constexpr (USE_COORD2) {
-            float lb2 = 0.0f;
-            const float* ci2 = coords2 + ((int64_t)b * N + i) * p;
+        i = __shfl_sync(0xffffffffu, i, 0);
+        if ((int)i < 0 || (int)i >= N) continue;
+
+        int skip = 0;
+        if (lane == 0) {
+            if (selected_mask && selected_mask[(int64_t)b * N + i]) skip = 1;
+        }
+        skip = __shfl_sync(0xffffffffu, skip, 0);
+        if (skip) continue;
+
+        float old = 0.0f;
+        if (lane == 0) {
+            old = min_dist[(int64_t)b * N + i];
+        }
+        old = __shfl_sync(0xffffffffu, old, 0);
+
+        // Projection-space bound (done on lane 0; p <= 64).
+        float lb = 0.0f;
+        if (lane == 0) {
+            const float* ci1 = coords1 + ((int64_t)b * N + i) * p;
             #pragma unroll
             for (int dd = 0; dd < 64; ++dd) {
                 if (dd >= p) break;
-                float dv = ci2[dd] - cref2[dd];
-                lb2 += dv * dv;
+                float dv = ci1[dd] - cref1[dd];
+                lb += dv * dv;
             }
-            lb = fmaxf(lb, lb2);
+            if constexpr (USE_COORD2) {
+                float lb2 = 0.0f;
+                const float* ci2 = coords2 + ((int64_t)b * N + i) * p;
+                #pragma unroll
+                for (int dd = 0; dd < 64; ++dd) {
+                    if (dd >= p) break;
+                    float dv = ci2[dd] - cref2[dd];
+                    lb2 += dv * dv;
+                }
+                lb = fmaxf(lb, lb2);
+            }
         }
+        lb = __shfl_sync(0xffffffffu, lb, 0);
 
         if (lb >= old) {
-            // No improvement possible; keep old.
-            unsigned long long k = pack_best_key(old, i);
-            if (k > local_best) local_best = k;
+            if (lane == 0) {
+                unsigned long long k = pack_best_key(old, i);
+                if (k > local_best) local_best = k;
+            }
             continue;
         }
 
         const scalar_t* xi = xb + (int64_t)i * D;
-        float dist = 0.0f;
+        float dist = WarpL2<scalar_t>::compute(xi, sh_ref, D, old);
 
-        // Vectorized full-D loop with early-exit.
-        if constexpr (std::is_same<scalar_t, float>::value) {
-            int d = 0;
-            constexpr int VEC_WIDTH = 4;
-            constexpr uintptr_t VEC_ALIGN = 16u;
-            while (d < D) {
-                int de = min(D, d + CHECK_ELEMS);
-                // Align to float4 boundary for both pointers.
-                while (d < de && ((((reinterpret_cast<uintptr_t>(xi + d)) & (VEC_ALIGN - 1u)) != 0u) ||
-                                  (((reinterpret_cast<uintptr_t>(sh_ref + d)) & (VEC_ALIGN - 1u)) != 0u))) {
-                    float dv = xi[d] - sh_ref[d];
-                    dist += dv * dv;
-                    ++d;
-                }
-                for (; d + VEC_WIDTH <= de; d += VEC_WIDTH) {
-                    float4 a = *reinterpret_cast<const float4*>(xi + d);
-                    float4 b4 = *reinterpret_cast<const float4*>(sh_ref + d);
-                    float dv0 = a.x - b4.x; dist += dv0 * dv0;
-                    float dv1 = a.y - b4.y; dist += dv1 * dv1;
-                    float dv2 = a.z - b4.z; dist += dv2 * dv2;
-                    float dv3 = a.w - b4.w; dist += dv3 * dv3;
-                }
-                for (; d < de; ++d) {
-                    float dv = xi[d] - sh_ref[d];
-                    dist += dv * dv;
-                }
-                if (dist >= old) { dist = old; break; }
+        if (lane == 0) {
+            float nd = dist;
+            if (nd < old) {
+                min_dist[(int64_t)b * N + i] = nd;
+            } else {
+                nd = old;
             }
-        } else if constexpr (std::is_same<scalar_t, at::Half>::value) {
-            const __half* xi_h = reinterpret_cast<const __half*>(xi);
-            const __half* rf_h = reinterpret_cast<const __half*>(sh_ref);
-            int d = 0;
-            constexpr int VEC_WIDTH = 2;
-            constexpr uintptr_t VEC_ALIGN = 4u;
-            while (d < D) {
-                int de = min(D, d + CHECK_ELEMS);
-                while (d < de && ((((reinterpret_cast<uintptr_t>(xi_h + d)) & (VEC_ALIGN - 1u)) != 0u) ||
-                                  (((reinterpret_cast<uintptr_t>(rf_h + d)) & (VEC_ALIGN - 1u)) != 0u))) {
-                    float dv = __half2float(xi_h[d]) - __half2float(rf_h[d]);
-                    dist += dv * dv;
-                    ++d;
-                }
-                for (; d + VEC_WIDTH <= de; d += VEC_WIDTH) {
-                    __half2 a2 = *reinterpret_cast<const __half2*>(xi_h + d);
-                    __half2 b2 = *reinterpret_cast<const __half2*>(rf_h + d);
-                    float2 af = __half22float2(a2);
-                    float2 bf = __half22float2(b2);
-                    float dv0 = af.x - bf.x; dist += dv0 * dv0;
-                    float dv1 = af.y - bf.y; dist += dv1 * dv1;
-                }
-                for (; d < de; ++d) {
-                    float dv = __half2float(xi_h[d]) - __half2float(rf_h[d]);
-                    dist += dv * dv;
-                }
-                if (dist >= old) { dist = old; break; }
-            }
-        } else if constexpr (std::is_same<scalar_t, at::BFloat16>::value) {
-            const __nv_bfloat16* xi_b = reinterpret_cast<const __nv_bfloat16*>(xi);
-            const __nv_bfloat16* rf_b = reinterpret_cast<const __nv_bfloat16*>(sh_ref);
-            int d = 0;
-            constexpr int VEC_WIDTH = 2;
-            constexpr uintptr_t VEC_ALIGN = 4u;
-            while (d < D) {
-                int de = min(D, d + CHECK_ELEMS);
-                while (d < de && ((((reinterpret_cast<uintptr_t>(xi_b + d)) & (VEC_ALIGN - 1u)) != 0u) ||
-                                  (((reinterpret_cast<uintptr_t>(rf_b + d)) & (VEC_ALIGN - 1u)) != 0u))) {
-                    float dv = __bfloat162float(xi_b[d]) - __bfloat162float(rf_b[d]);
-                    dist += dv * dv;
-                    ++d;
-                }
-                for (; d + VEC_WIDTH <= de; d += VEC_WIDTH) {
-                    __nv_bfloat162 a2 = *reinterpret_cast<const __nv_bfloat162*>(xi_b + d);
-                    __nv_bfloat162 b2 = *reinterpret_cast<const __nv_bfloat162*>(rf_b + d);
-                    float2 af = __bfloat1622float2(a2);
-                    float2 bf = __bfloat1622float2(b2);
-                    float dv0 = af.x - bf.x; dist += dv0 * dv0;
-                    float dv1 = af.y - bf.y; dist += dv1 * dv1;
-                }
-                for (; d < de; ++d) {
-                    float dv = __bfloat162float(xi_b[d]) - __bfloat162float(rf_b[d]);
-                    dist += dv * dv;
-                }
-                if (dist >= old) { dist = old; break; }
-            }
-        } else {
-            // Fallback (shouldn't happen).
-            for (int d = 0; d < D; ++d) {
-                float dv = to_float(xi[d]) - to_float(sh_ref[d]);
-                dist += dv * dv;
-                if (dist >= old) { dist = old; break; }
-            }
+            unsigned long long k = pack_best_key(nd, i);
+            if (k > local_best) local_best = k;
         }
-
-        float nd = dist;
-        if (nd < old) {
-            min_dist[(int64_t)b * N + i] = nd;
-        } else {
-            nd = old;
-        }
-
-        unsigned long long k = pack_best_key(nd, i);
-        if (k > local_best) local_best = k;
     }
 
     // Block-wide max reduction of the packed (dist,idx) key.
     unsigned long long v = warp_reduce_max_u64(local_best);
     __shared__ unsigned long long warp_best[32];
-    int lane = threadIdx.x & 31;
-    int wid  = threadIdx.x >> 5;
     if (lane == 0) warp_best[wid] = v;
     __syncthreads();
 
@@ -1509,28 +1766,32 @@ static torch::Tensor sample_cuda_indices_impl(
         torch::Tensor next_idx = torch::empty({B}, opts_i64);
 
         for (int64_t s = 1; s < k; s++) {
-            reduce_bucket_best_kernel<<<B, 256, 0, stream>>>(
-                bucket_best_key.data_ptr<int64_t>(),
-                bucket_count.data_ptr<int32_t>(),
-                selected_mask.data_ptr<uint8_t>(),
-                B, N, key_range,
-                next_idx.data_ptr<int64_t>(),
-                out_indices.data_ptr<int64_t>(), (int)k, (int)s);
-            CUDA_CHECK(cudaGetLastError());
+            if (s == k - 1) {
+                reduce_bucket_best_kernel<<<B, 256, 0, stream>>>(
+                    bucket_best_key.data_ptr<int64_t>(),
+                    bucket_count.data_ptr<int32_t>(),
+                    selected_mask.data_ptr<uint8_t>(),
+                    B, N, key_range,
+                    next_idx.data_ptr<int64_t>(),
+                    out_indices.data_ptr<int64_t>(), (int)k, (int)s);
+                CUDA_CHECK(cudaGetLastError());
+                break;
+            }
 
-            if (s == k - 1) break;
-            active_mask_kernel<<<grid_bucket, block, 0, stream>>>(
+            reduce_and_active_mask_kernel<<<B, 256, 0, stream>>>(
                 coords_f32.data_ptr<float>(),
                 coords2_ptr,
                 bucket_id.data_ptr<int32_t>(),
-                next_idx.data_ptr<int64_t>(),
                 bbox_min.data_ptr<float>(),
                 bbox_max.data_ptr<float>(),
                 bbox2_min_ptr,
                 bbox2_max_ptr,
                 bucket_best_key.data_ptr<int64_t>(),
                 bucket_count.data_ptr<int32_t>(),
+                selected_mask.data_ptr<uint8_t>(),
                 B, N, p, key_range,
+                next_idx.data_ptr<int64_t>(),
+                out_indices.data_ptr<int64_t>(), (int)k, (int)s,
                 active_mask.data_ptr<uint8_t>());
             CUDA_CHECK(cudaGetLastError());
 

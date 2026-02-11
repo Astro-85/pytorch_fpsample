@@ -6,7 +6,7 @@ from setuptools import find_packages, setup
 from torch.__config__ import parallel_info
 from torch.utils import cpp_extension
 
-__version__ = "0.2.8.2"
+__version__ = "0.2.8.4"
 
 
 def _want_cuda() -> bool:

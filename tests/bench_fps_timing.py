@@ -86,7 +86,7 @@ def _coverage_metric(
         perm = torch.randperm(n, generator=gen, device=x.device)[:m]
         x_eval = x.index_select(1, perm).float()
         x_sampled = x.gather(1, idx.unsqueeze(-1).expand(-1, -1, d)).float()
-        dists = torch.cdist(x_eval, x_sampled)
+        dists = torch.cdist(x_eval, x_sampled, p=2.0, compute_mode="donot_use_mm_for_euclid_dist")
         min_d = dists.min(dim=2).values
         return min_d.mean().item(), min_d.max().item()
 

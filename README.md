@@ -8,12 +8,18 @@ This project provides bucket-based FPS on both CPU and GPU. The GPU path is opti
 
 ## Installation
 
+### 1) Install PyTorch (required)
+
+Install PyTorch using the official instructions for your platform/CUDA:
+- https://pytorch.org/get-started/locally/
+
+### 2) Install `torch_fpsample`
+
 ```bash
-# Install from GitHub
-pip install git+https://github.com/Astro-85/pytorch_fpsample
+pip install --no-build-isolation git+https://github.com/Astro-85/pytorch_fpsample
 
 # Build locally
-pip install .
+pip install --no-build-isolation .
 ````
 
 ---
@@ -51,15 +57,6 @@ sampled_points, indices = torch_fpsample.sample(x, 512, mask=mask)
 print(sampled_points.size(), indices.size())
 # torch.Size([64, 1024, 3]) torch.Size([64, 1024])
 ```
-
----
-
-## CUDA support
-
-This package builds a CUDA extension when a CUDA toolchain is available (`nvcc` / `CUDA_HOME`).
-
-* Force CUDA build: `WITH_CUDA=1 pip install .`
-* Force CPU-only build: `WITH_CUDA=0 pip install .`
 
 ---
 

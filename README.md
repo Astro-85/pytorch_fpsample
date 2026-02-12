@@ -17,9 +17,6 @@ Install PyTorch using the official instructions for your platform/CUDA:
 
 ```bash
 pip install --no-build-isolation git+https://github.com/Astro-85/pytorch_fpsample
-
-# Build locally
-pip install --no-build-isolation .
 ````
 
 ---

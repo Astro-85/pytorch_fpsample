@@ -30,7 +30,7 @@ class FPSampleFunction : public torch::autograd::Function<FPSampleFunction> {
                                  torch::optional<int64_t> low_d) {
         torch::AutoDispatchBelowADInplaceOrView guard;
         static auto op = torch::Dispatcher::singleton()
-                             .findSchemaOrThrow("torch_fpsample::sample", "")
+                     .findSchemaOrThrow("torch_quickfps::sample", "")
                              .typed<FuncType>();
         auto results = op.call(x, k, h, start_idx, mask, low_d);
         auto ret_tensor = std::get<0>(results);
@@ -67,7 +67,7 @@ class FPSampleBaselineFunction : public torch::autograd::Function<FPSampleBaseli
                                  torch::optional<int64_t> low_d) {
         torch::AutoDispatchBelowADInplaceOrView guard;
         static auto op = torch::Dispatcher::singleton()
-                             .findSchemaOrThrow("torch_fpsample::sample_baseline", "")
+                     .findSchemaOrThrow("torch_quickfps::sample_baseline", "")
                              .typed<FuncTypeBaseline>();
         auto results = op.call(x, k, h, start_idx, mask, low_d);
         auto ret_tensor = std::get<0>(results);
@@ -134,7 +134,7 @@ Tensor sample_idx_autograd(const Tensor &x, int64_t k,
     // Indices are non-differentiable; we simply route to the underlying kernel below AD.
     torch::AutoDispatchBelowADInplaceOrView guard;
     static auto op = torch::Dispatcher::singleton()
-                         .findSchemaOrThrow("torch_fpsample::sample_idx", "")
+                         .findSchemaOrThrow("torch_quickfps::sample_idx", "")
                          .typed<FuncIdxType>();
     return op.call(x, k, h, start_idx, mask, low_d);
 }
@@ -146,11 +146,11 @@ Tensor sample_idx_baseline_autograd(const Tensor &x, int64_t k,
                                     torch::optional<int64_t> low_d) {
     torch::AutoDispatchBelowADInplaceOrView guard;
     static auto op = torch::Dispatcher::singleton()
-                         .findSchemaOrThrow("torch_fpsample::sample_idx_baseline", "")
+                         .findSchemaOrThrow("torch_quickfps::sample_idx_baseline", "")
                          .typed<FuncIdxBaselineType>();
     return op.call(x, k, h, start_idx, mask, low_d);
 }
-TORCH_LIBRARY_IMPL(torch_fpsample, Autograd, m) {
+TORCH_LIBRARY_IMPL(torch_quickfps, Autograd, m) {
     m.impl("sample", &sample_autograd);
     m.impl("sample_idx", &sample_idx_autograd);
     m.impl("sample_baseline", &sample_baseline_autograd);

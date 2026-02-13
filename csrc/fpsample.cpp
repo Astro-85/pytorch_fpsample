@@ -9,7 +9,7 @@
 #define STR_(x) #x
 #define STR(x) STR_(x)
 
-TORCH_LIBRARY(torch_fpsample, m) {
+TORCH_LIBRARY(torch_quickfps, m) {
     // low_d controls the KD-tree bucketing space on CUDA.
     // If low_d is None, the CUDA path attempts to build the KD-tree in the
     // original feature space (C=D). For high-dimensional embeddings, users

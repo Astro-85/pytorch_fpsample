@@ -6,7 +6,7 @@ from setuptools import find_packages, setup
 from torch.__config__ import parallel_info
 from torch.utils import cpp_extension
 
-__version__ = "0.2.8.4"
+__version__ = "2.0.0"
 
 
 def _want_cuda() -> bool:
@@ -79,7 +79,7 @@ if sys.platform == "darwin":
 if WITH_CUDA:
     ext_modules = [
         cpp_extension.CUDAExtension(
-            name="torch_fpsample._core",
+            name="torch_quickfps._core",
             include_dirs=["csrc"],
             sources=sources,
             extra_compile_args=extra_compile_args,
@@ -89,7 +89,7 @@ if WITH_CUDA:
 else:
     ext_modules = [
         cpp_extension.CppExtension(
-            name="torch_fpsample._core",
+            name="torch_quickfps._core",
             include_dirs=["csrc"],
             sources=sources,
             extra_compile_args=extra_compile_args,
@@ -98,7 +98,7 @@ else:
     ]
 
 setup(
-    name="torch_fpsample",
+    name="torch_quickfps",
     version=__version__,
     author="Leonard Lin",
     author_email="leonard.keilin@gmail.com",

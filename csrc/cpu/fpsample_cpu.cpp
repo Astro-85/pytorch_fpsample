@@ -297,7 +297,7 @@ Tensor sample_idx_cpu(
     return ret_indices.view(ret_indices_sizes).to(torch::kLong);
 }
 
-TORCH_LIBRARY_IMPL(torch_fpsample, CPU, m) {
+TORCH_LIBRARY_IMPL(torch_quickfps, CPU, m) {
     m.impl("sample", &sample_cpu);
     m.impl("sample_idx", &sample_idx_cpu);
 }

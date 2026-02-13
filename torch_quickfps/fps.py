@@ -1,7 +1,7 @@
-"""Public Python API for torch_fpsample.
+"""Public Python API for torch_quickfps.
 
 The core operator is implemented as a C++/CUDA extension and loaded via
-``torch.ops.load_library`` in :mod:`torch_fpsample.__init__`.
+``torch.ops.load_library`` in :mod:`torch_quickfps.__init__`.
 
 We expose two user-facing functions:
 
@@ -51,8 +51,8 @@ def sample(
     """
 
     if return_points:
-        return torch.ops.torch_fpsample.sample(x, k, h, start_idx, mask, low_d)
-    return torch.ops.torch_fpsample.sample_idx(x, k, h, start_idx, mask, low_d)
+        return torch.ops.torch_quickfps.sample(x, k, h, start_idx, mask, low_d)
+    return torch.ops.torch_quickfps.sample_idx(x, k, h, start_idx, mask, low_d)
 
 
 def sample_idx(
@@ -71,7 +71,7 @@ def sample_idx(
     Returns:
         sampled_indices with shape [..., k]
     """
-    return torch.ops.torch_fpsample.sample_idx(x, k, h, start_idx, mask, low_d)
+    return torch.ops.torch_quickfps.sample_idx(x, k, h, start_idx, mask, low_d)
 
 
 def sample_baseline(
@@ -89,10 +89,10 @@ def sample_baseline(
     """
 
     if return_points:
-        return torch.ops.torch_fpsample.sample_baseline(
+        return torch.ops.torch_quickfps.sample_baseline(
             x, k, h, start_idx, mask, low_d
         )
-    return torch.ops.torch_fpsample.sample_idx_baseline(
+    return torch.ops.torch_quickfps.sample_idx_baseline(
         x, k, h, start_idx, mask, low_d
     )
 
@@ -106,6 +106,6 @@ def sample_idx_baseline(
     low_d: Optional[int] = None,
 ) -> torch.Tensor:
     """Baseline vanilla FPS (indices only, CUDA only)."""
-    return torch.ops.torch_fpsample.sample_idx_baseline(
+    return torch.ops.torch_quickfps.sample_idx_baseline(
         x, k, h, start_idx, mask, low_d
     )

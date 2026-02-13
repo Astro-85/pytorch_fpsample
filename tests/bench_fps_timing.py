@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 import torch
 
-from torch_fpsample import sample_idx, sample_idx_baseline
+from torch_quickfps import sample_idx, sample_idx_baseline
 
 
 def _make_gaussian_blobs(

@@ -1142,7 +1142,7 @@ static torch::Tensor sample_cuda_indices_impl(
         const uint32_t seed2 = seed1 ^ 0x68bc21ebu;
 
         AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16,
-                                        x_reshaped.scalar_type(), "torch_fpsample_proj2", [&] {
+                        x_reshaped.scalar_type(), "torch_quickfps_proj2", [&] {
             const scalar_t* xptr = (const scalar_t*)x_reshaped.data_ptr<scalar_t>();
             project_rademacher_kernel<scalar_t><<<grid_points, block, 0, stream>>>(
                 xptr, B, N, D, p, seed1, coords_f32.data_ptr<float>());
@@ -1289,7 +1289,7 @@ static torch::Tensor sample_cuda_indices_impl(
     size_t shmem = (size_t)D * sizeof(float);
 
     AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16,
-                                   x_reshaped.scalar_type(), "torch_fpsample_cuda", [&] {
+                                   x_reshaped.scalar_type(), "torch_quickfps_cuda", [&] {
         const scalar_t* xptr = (const scalar_t*)x_reshaped.data_ptr<scalar_t>();
 
         init_best_and_mindist_kernel<scalar_t><<<grid_points, block, shmem, stream>>>(

@@ -47,7 +47,7 @@ Tensor sample_idx_meta(const Tensor &x, int64_t k,
     return torch::empty(tmp_s2, x.options().dtype(torch::kLong));
 }
 
-TORCH_LIBRARY_IMPL(torch_fpsample, Meta, m) {
+TORCH_LIBRARY_IMPL(torch_quickfps, Meta, m) {
     m.impl("sample", &sample_meta);
     m.impl("sample_idx", &sample_idx_meta);
     m.impl("sample_baseline", &sample_meta);

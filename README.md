@@ -1,4 +1,4 @@
-# PyTorch FPSample
+# PyTorch QuickFPS
 
 Efficient **farthest point sampling (FPS)** for PyTorch, adapted from [fpsample](https://github.com/leonardodalinky/fpsample).
 
@@ -13,10 +13,10 @@ This project provides bucket-based FPS on both CPU and GPU. The GPU path is opti
 Install PyTorch using the official instructions for your platform/CUDA:
 - https://pytorch.org/get-started/locally/
 
-### 2) Install `torch_fpsample`
+### 2) Install `torch_quickfps`
 
 ```bash
-pip install --no-build-isolation git+https://github.com/Astro-85/pytorch_fpsample
+pip install --no-build-isolation git+https://github.com/Astro-85/torch_quickfps
 ````
 
 ---
@@ -25,31 +25,31 @@ pip install --no-build-isolation git+https://github.com/Astro-85/pytorch_fpsampl
 
 ```python
 import torch
-import torch_fpsample
+import torch_quickfps
 
 x = torch.rand(64, 2048, 256)
 
 # Random sample
-sampled_points, indices = torch_fpsample.sample(x, 1024)
+sampled_points, indices = torch_quickfps.sample(x, 1024)
 
 # Random sample with specific tree height
-sampled_points, indices = torch_fpsample.sample(x, 1024, h=3)
+sampled_points, indices = torch_quickfps.sample(x, 1024, h=3)
 
 # Random sample with start point index (int)
-sampled_points, indices = torch_fpsample.sample(x, 1024, start_idx=0)
+sampled_points, indices = torch_quickfps.sample(x, 1024, start_idx=0)
 
 # For high-dimensional embeddings on CUDA, set low_d for faster bucketing
-sampled_points, indices = torch_fpsample.sample(x, 1024, h=8, low_d=8)
+sampled_points, indices = torch_quickfps.sample(x, 1024, h=8, low_d=8)
 
 # Indices-only
-indices = torch_fpsample.sample(x, 1024, return_points=False)
+indices = torch_quickfps.sample(x, 1024, return_points=False)
 # (equivalently)
-indices = torch_fpsample.sample_idx(x, 1024)
+indices = torch_quickfps.sample_idx(x, 1024)
 
 # Masked sampling: only sample from valid points (mask shape [B, N])
 mask = torch.ones(x.shape[:-1], dtype=torch.bool)
 mask[:, 1000:] = False  # e.g. padding
-sampled_points, indices = torch_fpsample.sample(x, 512, mask=mask)
+sampled_points, indices = torch_quickfps.sample(x, 512, mask=mask)
 
 print(sampled_points.size(), indices.size())
 # torch.Size([64, 1024, 3]) torch.Size([64, 1024])

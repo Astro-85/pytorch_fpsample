@@ -277,7 +277,7 @@ static torch::Tensor sample_cuda_indices_baseline_impl(
 } // namespace
 
 // Baseline vanilla FPS entry points (not bound to a dispatcher by default).
-// These mirror torch_fpsample::sample_idx and torch_fpsample::sample signatures.
+// These mirror torch_quickfps::sample_idx and torch_quickfps::sample signatures.
 
 torch::Tensor sample_idx_cuda_baseline(
     const torch::Tensor& x,

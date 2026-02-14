@@ -100,8 +100,8 @@ else:
 setup(
     name="torch_quickfps",
     version=__version__,
-    author="Leonard Lin",
-    author_email="leonard.keilin@gmail.com",
+    author="Andrew Lu",
+    author_email="alu1@seas.upenn.edu",
     description="PyTorch bucket-based farthest point sampling (CPU + CUDA).",
     ext_modules=ext_modules,
     keywords=["pytorch", "farthest", "furthest", "sampling", "sample", "fps", "quickfps"],

@@ -6,6 +6,11 @@ from setuptools import find_packages, setup
 from torch.__config__ import parallel_info
 from torch.utils import cpp_extension
 
+from pathlib import Path
+
+THIS_DIR = Path(__file__).resolve().parent
+CSRC_DIR = THIS_DIR / "csrc"
+
 __version__ = "2.1.0"
 
 
@@ -81,7 +86,7 @@ if WITH_CUDA:
     ext_modules = [
         cpp_extension.CUDAExtension(
             name="torch_quickfps._core",
-            include_dirs=["csrc"],
+            include_dirs=[str(CSRC_DIR)],
             sources=sources,
             extra_compile_args=extra_compile_args,
             extra_link_args=extra_link_args,
@@ -92,7 +97,7 @@ else:
     ext_modules = [
         cpp_extension.CppExtension(
             name="torch_quickfps._core",
-            include_dirs=["csrc"],
+            include_dirs=[str(CSRC_DIR)],
             sources=sources,
             extra_compile_args=extra_compile_args,
             extra_link_args=extra_link_args,

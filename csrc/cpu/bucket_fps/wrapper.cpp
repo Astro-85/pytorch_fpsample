@@ -3,9 +3,14 @@
 #include "static/KDLineTree.h"
 #include <array>
 #include <memory>
-#include <torch/extension.h>
 #include <utility>
 #include <vector>
+#include <stdexcept>
+
+
+#ifndef QFPS_CHECK
+#define QFPS_CHECK(cond) do { if(!(cond)) throw std::runtime_error("torch_quickfps: check failed: " #cond); } while(0)
+#endif
 
 #ifndef BUCKET_FPS_MAX_DIM
 #define BUCKET_FPS_MAX_DIM 8
@@ -129,12 +134,11 @@ template <typename T, typename S = T> struct kdline_func_helper {
 void bucket_fps_kdline(const float *raw_data, size_t n_points, size_t dim,
                        size_t n_samples, size_t start_idx, size_t height,
                        int64_t *sampled_point_indices) {
-    TORCH_CHECK(dim > 0, "dim should be larger than 0");
-    TORCH_CHECK(n_points != 0, "n_points should be larger than 0");
-    TORCH_CHECK(n_samples != 0, "n_samples should be larger than 0");
-    TORCH_CHECK(height != 0, "height should be larger than 0");
-    TORCH_CHECK(start_idx < n_points,
-                "start_idx should be smaller than n_points");
+    QFPS_CHECK(dim > 0);
+    QFPS_CHECK(n_points != 0);
+    QFPS_CHECK(n_samples != 0);
+    QFPS_CHECK(height != 0);
+    QFPS_CHECK(start_idx < n_points);
     if (dim <= max_dim) {
         auto func_arr =
             map<KDLineFuncType, max_dim>(kdline_func_helper<float>{});
@@ -146,5 +150,4 @@ void bucket_fps_kdline(const float *raw_data, size_t n_points, size_t dim,
                                     start_idx, height, sampled_point_indices);
     }
 }
-
 

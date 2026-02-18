@@ -6,7 +6,7 @@ from setuptools import find_packages, setup
 from torch.__config__ import parallel_info
 from torch.utils import cpp_extension
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 
 def _want_cuda() -> bool:
@@ -28,26 +28,25 @@ def _want_cuda() -> bool:
 
 WITH_CUDA = _want_cuda()
 
+# ABI-stable build: compile only the Stable-ABI extension sources.
 sources = [
-    "csrc/fpsample.cpp",
-    "csrc/fpsample_autograd.cpp",
-    "csrc/fpsample_meta.cpp",
-    "csrc/cpu/fpsample_cpu.cpp",
+    "csrc/stable/quickfps_ops.cpp",
+    "csrc/stable/stable_tensor_inl.cpp",
+    "csrc/stable/cpu/quickfps_cpu.cpp",
     "csrc/cpu/bucket_fps/wrapper.cpp",
 ]
 
 if WITH_CUDA:
     sources += [
-        # IMPORTANT: keep unique basenames for .cpp and .cu sources.
-        # Setuptools derives the object filename from the basename; if both
-        # are named fpsample_cuda.* they collide into the same .o and the
-        # link step sees the object twice, causing duplicate symbols.
-        "csrc/cuda/fpsample_cuda_bindings.cpp",
-        "csrc/cuda/fpsample_cuda_kernels.cu",
-        "csrc/cuda/fpsample_cuda_kernels_baseline.cu",
+        "csrc/stable/cuda/quickfps_cuda.cu",
     ]
 
-extra_compile_args = {"cxx": ["-O3"]}
+extra_compile_args = {
+    "cxx": [
+        "-O3",        # LibTorch Stable ABI (minimum PyTorch 2.10.0)
+        "-DTORCH_TARGET_VERSION=0x020a000000000000",
+    ]
+}
 extra_link_args = []
 
 # OpenMP
@@ -67,6 +66,8 @@ if WITH_CUDA:
         "-O3",
         "--use_fast_math",
         "-lineinfo",
+        # libtorch stable ABI flag for nvcc compilation units too
+        "-DTORCH_TARGET_VERSION=0x020a000000000000",
     ]
 
 # Compile for mac arm64
@@ -84,6 +85,7 @@ if WITH_CUDA:
             sources=sources,
             extra_compile_args=extra_compile_args,
             extra_link_args=extra_link_args,
+            py_limited_api=True,
         )
     ]
 else:
@@ -94,6 +96,7 @@ else:
             sources=sources,
             extra_compile_args=extra_compile_args,
             extra_link_args=extra_link_args,
+            py_limited_api=True,
         )
     ]
 
@@ -108,6 +111,7 @@ setup(
     packages=find_packages(),
     package_data={"": ["*.pyi"]},
     cmdclass={"build_ext": cpp_extension.BuildExtension},
-    python_requires=">=3.8",
-    install_requires=["torch>=2.0"],
+    python_requires=">=3.10",
+    install_requires=["torch>=2.10"],
+    options={"bdist_wheel": {"py_limited_api": "cp310"}},
 )

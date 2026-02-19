@@ -11,13 +11,33 @@ This project provides bucket-based FPS on both CPU and GPU. The GPU path is opti
 ### 1) Install PyTorch (required)
 
 Install PyTorch using the official instructions for your platform/CUDA:
-- https://pytorch.org/get-started/locally/
+
+* https://pytorch.org/get-started/locally/
 
 ### 2) Install `torch_quickfps`
 
+#### Option A: prebuilt wheels from pip
+
+```bash
+# CPU-only
+pip install torch-quickfps
+
+# CUDA 12.8
+pip install torch-quickfps-cu128
+
+# CUDA 13.0
+pip install torch-quickfps-cu130
+```
+
+Notes:
+
+* The CUDA wheel you choose should match the CUDA-enabled PyTorch you installed (e.g., cu128 wheel with a cu128 PyTorch build).
+
+#### Option B: install from source (GitHub)
+
 ```bash
 pip install --no-build-isolation git+https://github.com/Astro-85/torch_quickfps
-````
+```
 
 ---
 
@@ -52,7 +72,7 @@ mask[:, 1000:] = False  # e.g. padding
 sampled_points, indices = torch_quickfps.sample(x, 512, mask=mask)
 
 print(sampled_points.size(), indices.size())
-# torch.Size([64, 1024, 3]) torch.Size([64, 1024])
+# torch.Size([64, 1024, 256]) torch.Size([64, 1024])
 ```
 
 ---

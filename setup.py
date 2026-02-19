@@ -105,12 +105,19 @@ else:
         )
     ]
 
+DIST_NAME = os.environ.get("QUICKFPS_DIST_NAME", "torch-quickfps")
+THIS_DIR = Path(__file__).resolve().parent
+README = (THIS_DIR / "README.md").read_text(encoding="utf-8")
 setup(
-    name="torch_quickfps",
+    name=DIST_NAME,
     version=__version__,
     author="Andrew Lu",
     author_email="alu1@seas.upenn.edu",
     description="PyTorch bucket-based farthest point sampling (CPU + CUDA).",
+    long_description=README,
+    long_description_content_type="text/markdown",
+    url="https://github.com/Astro-85/torch_quickfps",
+    license="MIT",
     ext_modules=ext_modules,
     keywords=["pytorch", "farthest", "furthest", "sampling", "sample", "fps", "quickfps"],
     packages=find_packages(),
